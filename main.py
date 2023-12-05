@@ -36,8 +36,9 @@ def get_args():
     parser.add_argument('--lamb', action='store', type=float, dest='lamb', default=None)
     parser.add_argument('--lamb_schedule', action='store', default=False, dest='lamb_schedule',
                         help="name of the lamb scheduling")
-    # parser.add_argument('--lamb_schedule', default=False,
-    #                     type=lambda x: (str(x).lower() in ['sublinear', 'linear', 'log']))
+    parser.add_argument('--line-search', action='store', default=False, dest='line_search',
+                        help="option to use a line search")
+
     parser.add_argument('--delta', action='store', type=float, dest='delta', default=None)
     parser.add_argument("--lr", action='store', type=float, dest='lr', default=1.0)
     parser.add_argument("--beta", action='store', type=float, dest='beta', default=0.0)
@@ -47,6 +48,10 @@ def get_args():
     parser.add_argument('--run_sana', default=False,
                         type=lambda x: (str(x).lower() in ['true', '1', 'yes']))
     parser.add_argument('--run_sag', default=False,
+                        type=lambda x: (str(x).lower() in ['true', '1', 'yes']))
+    parser.add_argument('--run_sag_lin', default=False,
+                        type=lambda x: (str(x).lower() in ['true', '1', 'yes']))
+    parser.add_argument('--run_msag', default=False,
                         type=lambda x: (str(x).lower() in ['true', '1', 'yes']))
     parser.add_argument('--run_svrg', default=False,
                         type=lambda x: (str(x).lower() in ['true', '1', 'yes']))
@@ -132,6 +137,15 @@ def build_problem(opt):
 
     return folder_path, criterion, penalty, reg, X, y 
 
+def set_minibatch_size(n,b):
+    r'''Takes number of data points, and a given minibatch size b, 
+    check if b is possible and sets alternative if not possible'''
+    # if b> n/5:
+    #     b = np.ceil(n/5)
+    if b >= n:
+        b=n
+    return b
+
 def run(opt, folder_path, criterion, penalty, reg, X, y):
     # data_set = opt.data_set
     # folder_path = os.path.join(opt.folder, data_set)
@@ -174,6 +188,20 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
     dict_grad_iter = {}
     dict_loss_iter = {}
     dict_time_iter = {}
+    dict_stepsize_iter = {}
+    dict_slack_iter = {}
+    def collect_save_dictionaries(algo_name, output_dict):
+        # "grad_iter" : grad_iter, "loss_iter" : loss_iter, "grad_time" : grad_time, "stepsizes" : stepsizes
+        dict_grad_iter[algo_name] = output_dict['grad_iter']
+        dict_loss_iter[algo_name] = output_dict['loss_iter']
+        dict_time_iter[algo_name] = output_dict['grad_time']
+        if "stepsizes" in output_dict:
+            dict_stepsize_iter[algo_name] = output_dict['stepsizes']
+        if "slack" in output_dict:
+            dict_slack_iter[algo_name] = output_dict['slack']
+            
+        utils.save(folder_path, algo_name, dict_grad_iter, dict_loss_iter, dict_time_iter)
+
     if opt.run_svrg2:
         np.random.seed(0)  # random seed to reproduce the experiments
         svrg2_lr = opt.lr  # 0.001*reg
@@ -357,18 +385,20 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
 
     if opt.run_sps:
         np.random.seed(0)
-        ## Clever L_max used in MOTAPS paper
-        # L_max = utils.compute_L_max(X, reg, opt.loss,opt.regularizer)
-        # sps_max = 4.0/L_max
-        sps_max = 100.0 # Nico suggested 10 or 100 or larger. 
-        sps_lr = 1.0
-        eps = 0.01
-        if opt.beta == 0.0:
-            beta = 0.0
+        sps_lr = 0.5
+        eps = 0.000000001
+        if opt.beta is None:
+            beta = 0.5
             algo_name = "SP"
         else:
             beta = opt.beta
             algo_name = "SPM" + str(beta)
+
+        if opt.lamb is None:
+            sps_max = 10.0# Nico suggested 10 or 100. But 100 was too large for convex
+        else:
+            sps_max = opt.lamb
+            algo_name = algo_name + "-l-" + str(sps_max)    
         logging.info("Learning rate used for SP method: {:f}".format(sps_lr))
         kwargs = {"loss": criterion, "data": X, "label": y, "lr": sps_lr, "reg": reg,
                   "epoch": epochs, "x_0": x_0.copy(), "regularizer": penalty, 
@@ -600,6 +630,23 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
                    os.path.join(folder_path, 'spsL1_loss_iter'), loss_iter,
                    os.path.join(folder_path, 'spsL1_grad_time'), grad_time)
 
+    if opt.run_spsL1eq:
+        np.random.seed(0)
+        spsL1eq_lr = opt.lr
+        algo_name = "spsL1eq" 
+        if opt.lamb is None:
+            lamb = 1#1.00 #1.0  0.05  # try 0.80  for phishing 0.05
+        else:
+            lamb = opt.lamb
+        if opt.lamb_schedule is not False:
+            algo_name = algo_name + opt.lamb_schedule
+        else: 
+            algo_name = algo_name + "-l-" + str(lamb)
+        kwargs = {"loss": criterion, "data": X, "label": y, "lr": spsL1eq_lr, "reg": reg,
+                  "epoch": epochs, "x_0": x_0.copy(),"s_0": S_0.copy(), "regularizer": penalty, 
+                  "tol": opt.tol, "lamb": lamb, "lamb_schedule": opt.lamb_schedule}
+        output_dict = utils.run_algorithm(algo_name=algo_name, algo=spsL1eq, algo_kwargs=kwargs, n_repeat=n_rounds)
+        collect_save_dictionaries(algo_name, output_dict)
 
     if opt.run_taps:
         np.random.seed(0)
@@ -693,72 +740,94 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
     if opt.run_sag:
         np.random.seed(0)  # random seed to reproduce the experiments
         L_max = utils.compute_L_max(X, reg, opt.loss,opt.regularizer)
+        L = utils.compute_L(X, reg, opt.loss,opt.regularizer)
         if L_max ==None:
             print("Warning!!! SVRG learning rate")
             sag_lr = 0.01
         else:
-            sag_lr = 1.0/(2.0*L_max)
+            b= opt.b
+            sag_lr = 1/L_max#1/(L* (n/b)*(b-1)/(n-1) + ((n-b)/(n-1))*L_max/b ) #opt.b*1.0/(4.0*L_max)
+            sag_lr = sag_lr/16
         # in the SAG paper, the lr given by theory is 1/16L.
         # sag_lr = 0.25 / (max_squared_sum + 4.0 * reg)  # theory lr
         logging.info("Learning rate used for SAG: {:f}".format(sag_lr))
         kwargs = {"loss": criterion, "data": X, "label": y, "lr": sag_lr, "reg": reg,
-                  "epoch": epochs, "x_0": x_0.copy(), "regularizer": penalty, "tol": opt.tol}
-        grad_iter, loss_iter, grad_time = utils.run_algorithm(
+                  "epoch": epochs, "x_0": x_0.copy(), "regularizer": penalty, "tol": opt.tol, "b" : opt.b}
+        output_dict = utils.run_algorithm(
             algo_name="SAG", algo=sag, algo_kwargs=kwargs, n_repeat=n_rounds)
-        dict_grad_iter["SAG"] = grad_iter
-        dict_loss_iter["SAG"] = loss_iter   
-        utils.save(os.path.join(folder_path, 'sag_grad_iter'), grad_iter,
-                   os.path.join(folder_path, 'sag_loss_iter'), loss_iter,
-                   os.path.join(folder_path, 'sag_grad_time'), grad_time)
-    else:
-        grad_iter, loss_iter, grad_time = utils.load(os.path.join(folder_path, 'sag_grad_iter'),
-                                          os.path.join(folder_path, 'sag_loss_iter'),
-                                          os.path.join(folder_path, 'sag_grad_time'))
-        if grad_iter:
-            dict_grad_iter["SAG"] = grad_iter
+        collect_save_dictionaries("SAG", output_dict)
+    # else:
+    #     grad_iter, loss_iter, grad_time = utils.load(folder_path, "SAG")
+    #     if grad_iter:
+    #         dict_grad_iter["SAG"] = grad_iter
+    if opt.run_sag_lin:
+        np.random.seed(0)  # random seed to reproduce the experiments
+        logging.info("Learning rate used for SAG: {:f}".format(sag_lr))
+        kwargs = {"loss": criterion, "data": X, "label": y, "lr": sag_lr, "reg": reg,
+                  "epoch": epochs, "x_0": x_0.copy(), "regularizer": penalty, "tol": opt.tol, "b" : opt.b, "linesearch": True}
+        output_dict = utils.run_algorithm(
+            algo_name="SAG-l", algo=sag, algo_kwargs=kwargs, n_repeat=n_rounds)
+        collect_save_dictionaries("SAG-l", output_dict)
+    # else:
+    #     grad_iter, loss_iter, grad_time = utils.load(folder_path, "SAG")
+    #     if grad_iter:
+    #         dict_grad_iter["SAG"] = grad_iter
+
+    if opt.run_msag:
+        np.random.seed(0)  # random seed to reproduce the experiments
+        kwargs = {"loss": criterion, "data": X, "label": y, "lr": 1, "reg": reg,
+                  "epoch": epochs, "x_0": x_0.copy(), "regularizer": penalty, "tol": opt.tol, "b" : opt.b, "MSAG" : True, "fstar" : 1.0}
+        output_dict = utils.run_algorithm(
+            algo_name="MSAG", algo=sag, algo_kwargs=kwargs, n_repeat=n_rounds)
+        collect_save_dictionaries("MSAG", output_dict)
+    # else:
+    #     grad_iter, loss_iter, grad_time = utils.load(folder_path, "SAG")
+    #     if grad_iter:
+    #         dict_grad_iter["SAG"] = grad_iter
+
 
     if opt.run_svrg:
         np.random.seed(0)  # random seed to reproduce the experiments
         L_max = utils.compute_L_max(X, reg, opt.loss,opt.regularizer)
+        L = utils.compute_L(X, reg, opt.loss,opt.regularizer)
         if L_max ==None:
             print("Warning!!! SVRG learning rate")
             svrg_lr = 0.01
         else:
-            svrg_lr = 1/(2.0*L_max)
+            b= opt.b
+            svrg_lr =1/(L* (n/b)*(b-1)/(n-1) + 3*((n-b)/(n-1))*L_max/b ) #opt.b*1.0/(4.0*L_max)
+            svrg_lr = svrg_lr/2
+            # svrg_lr = opt.b/(2.0*L_max)
 
         # in the book "Convex Optimization: Algorithms and Complexity, Sébastien Bubeck",
         # the Theorem 6.5 indicates that the theory choice lr of SVRG should be 1/10L.
         # svrg_lr = 0.4 / (max_squared_sum + 4.0 * reg)  # theory lr
         logging.info("Learning rate used for SVRG: {:f}".format(svrg_lr))
         kwargs = {"loss": criterion, "data": X, "label": y, "lr": svrg_lr, "reg": reg,
-                  "epoch": epochs, "x_0": x_0.copy(), "regularizer": penalty, "tol": opt.tol}
-        grad_iter, loss_iter, grad_time = utils.run_algorithm(
-            algo_name="SVRG", algo=svrg, algo_kwargs=kwargs, n_repeat=n_rounds)
-        dict_grad_iter["SVRG"] = grad_iter
-        dict_loss_iter["SVRG"] = loss_iter
-        utils.save(os.path.join(folder_path, 'svrg_grad_iter'), grad_iter,
-                   os.path.join(folder_path, 'svrg_loss_iter'), loss_iter,
-                   os.path.join(folder_path, 'svrg_grad_time'), grad_time)
-    else:
-        grad_iter, loss_iter, grad_time = utils.load(os.path.join(folder_path, 'svrg_grad_iter'),
-                                          os.path.join(folder_path, 'svrg_loss_iter'),
-                                          os.path.join(folder_path, 'svrg_grad_time'))
-        if grad_iter:
-            dict_grad_iter["SVRG"] = grad_iter
+                  "epoch": epochs, "x_0": x_0.copy(), "regularizer": penalty, "tol": opt.tol, "b" : opt.b}
+        output_dict = utils.run_algorithm(
+             algo_name="SVRG", algo=svrg, algo_kwargs=kwargs, n_repeat=n_rounds)
+        collect_save_dictionaries("SVRG", output_dict)
+    # else:
+    #     grad_iter, loss_iter, grad_time = utils.load(folder_path, "SVRG")
+    #     if grad_iter:
+    #         dict_grad_iter["SVRG"] = grad_iter
 
 ## Final return of run()     
     return dict_grad_iter, dict_loss_iter, dict_time_iter #, opt.data_set, opt.name, folder_path
 
 if __name__ == '__main__': 
-
+  
     opt = get_args()   #get options and parameters from parser
     folder_path, criterion, penalty, reg, X, y  = build_problem(opt)  #build the optimization problem
-    dict_grad_iter, dict_loss_iter, dict_time_iter  = run(opt, folder_path, criterion, penalty, reg, X, y)
-
+    dict_grad_iter, dict_loss_iter, dict_time_iter, dict_stepsize_iter, dict_slack_iter  = run(opt, folder_path, criterion, penalty, reg, X, y)
+    
     #Plot the training loss and gradient convergence
-    utils.plot_iter(result_dict=dict_grad_iter, problem=opt.data_set, title = opt.name + "-grad-iter" + "-reg-" + "{:.2e}".format(reg), save_path=folder_path)
-    utils.plot_iter(result_dict=dict_loss_iter, problem=opt.data_set, title = opt.name + "-loss-iter" + "-reg-" + "{:.2e}".format(reg), save_path=folder_path, gradplot=False)
-
+    utils.plot_iter(result_dict=dict_grad_iter, problem=opt.data_set, title = opt.name + "-grad" + "-reg-" + "{:.2e}".format(reg), save_path=folder_path, tol=opt.tol, yaxislabel=r"$\| \nabla f \|^2$")
+    utils.plot_iter(result_dict=dict_loss_iter, problem=opt.data_set, title = opt.name + "-loss" + "-reg-" + "{:.2e}".format(reg), save_path=folder_path, tol=opt.tol, yaxislabel=r"$f(w^t)-f^*$")
+    # utils.plot_iter(result_dict=dict_slack_iter, problem=opt.data_set, title = opt.name + "-slack" + "-reg-" + "{:.2e}".format(reg), save_path=folder_path, tol=opt.tol, yaxislabel=r"$min_i s_i^t$")
+    # utils.plot_iter(result_dict=dict_loss_iter, problem=opt.data_set, title = opt.name + "-max-loss" + "-reg-" + "{:.2e}".format(reg), save_path=folder_path, yaxislabel=r"$\max_i f_i(w^t)$")
+    utils.plot_iter(result_dict=dict_stepsize_iter, problem=opt.data_set, title = opt.name + "-stepsize" + "-reg-" + "{:.2e}".format(reg), save_path=folder_path, yaxislabel="step sizes")
     # Some code Shuang wrote
     dict_time_iter_sum = {} 
     for key in dict_time_iter: 

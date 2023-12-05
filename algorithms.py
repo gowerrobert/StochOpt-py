@@ -2,18 +2,92 @@ from pickle import FALSE
 import numpy as np
 import time
 import logging
+from scipy.sparse import issparse
+from scipy.optimize import fmin_l_bfgs_b
+import random
+
+def armijo_backtracking(x, obj_func, grad, d, alpha=0.5, beta=0.8, max_iter=100):
+    """
+    Armijo Backtracking Line Search
+
+    Parameters:
+    - x: Current point (numpy array)
+    - obj_func: Objective function to be minimized
+    - grad_func: Gradient function of the objective function
+    - alpha: Initial step size (default: 0.5)
+    - beta: Backtracking factor (default: 0.8)
+    - max_iter: Maximum number of iterations (default: 100)
+
+    Returns:
+    - optimal_step: Optimal step size satisfying the Armijo condition
+    """
+
+    optimal_step = alpha
+    # Evaluate the objective function and gradient at the current point
+    obj_current = obj_func(x)
+    for _ in range(max_iter):
+
+        # Evaluate the objective function at the new point
+        obj_new = obj_func(x + optimal_step * d)
+
+        # Armijo condition check
+        if obj_new <= obj_current + alpha * optimal_step * grad.dot(d):
+            break
+        else:
+            # Reduce the step size using the backtracking factor
+            optimal_step *= beta
+
+    return optimal_step
+
+
+def partition_into_batches(n, b):
+    # Calculate the number of full batches and the size of the last batch
+    num_full_batches = n // b
+    last_batch_size = n % b if n % b != 0 else 0
+
+    # Create the partitions
+    partitions = [list(range(i * b, (i + 1) * b)) for i in range(num_full_batches)]
+
+    # Add the last batch (which might have fewer than b elements)
+    if last_batch_size!=0:
+        partitions.append(list(range(num_full_batches * b, num_full_batches * b + last_batch_size)))
+
+    return partitions
+
+def loss_minibatch(loss, label, data, x, reg, regularizer, minib=None):
+    if(minib is None):  # Full batch
+        return np.mean(loss.val(label, data @ x), axis =0)  + reg * regularizer.val(x)  
+    else:
+        return np.mean(loss.val(label[minib], data[minib, :] @ x), axis =0)  + reg * regularizer.val(x)      
+
+def grad_minibatch(loss, label, data, x, reg, regularizer, minib=None):
+    if(minib is None): # Full batch
+        if(issparse(data)):
+            return np.mean(loss.prime(label, data @ x) * data, axis=0) + reg * regularizer.prime(x)
+        return np.mean(loss.prime(label, data @ x).reshape(-1, 1) * data, axis=0) + reg * regularizer.prime(x)
+    else:
+        if(issparse(data)):
+            return np.mean(loss.prime(label[minib], data[minib, :] @ x)* data[minib, :], axis =0)  + reg * regularizer.prime(x)
+        return np.mean(loss.prime(label[minib], data[minib, :] @ x).reshape(-1,1)* data[minib, :], axis =0)  + reg * regularizer.prime(x)
+
 
 def update_records_and_print(cnt, loss,loss_x0, regularizer, data, label, lr, reg, epoch, 
                              x, norm_records, loss_records, time_records, #acc_records,
-                             total_running_time, epoch_running_time, verbose):
+                             total_running_time, epoch_running_time, verbose, normg0 =1, fstar=None ):
     # Compute full gradient and loss
-    g = np.mean(loss.prime(label, data @ x).reshape(-1, 1) * data, axis=0) + reg * regularizer.prime(x)
-    lx = np.mean(loss.val(label, data @ x)) + reg * regularizer.val(x)
+    g = grad_minibatch(loss, label, data, x, reg, regularizer)
+    lx = loss_minibatch(loss, label, data, x, reg, regularizer)
+    # import pdb; pdb.set_trace()
+    if fstar==None:
+        func = lambda x: loss_minibatch(loss, label, data, x, reg, regularizer)
+        fprime = lambda x: grad_minibatch(loss, label, data, x, reg, regularizer)
+        xstar, fstar, d = fmin_l_bfgs_b(func, x, fprime)
     # Update gradient norm, loss and time records
-    norm_records.append(np.sqrt(g @ g))
-    loss_records.append(lx/loss_x0)
-    # y_hat = np.sign(data @ x)
-    # acc_records.append(np.sum(y_hat == label)/n)
+    norm_records.append(np.sqrt(g @ g)/normg0)
+    relative_loss = (lx-fstar)/(loss_x0-fstar)
+    if relative_loss<=0:
+        relative_loss =1e-18
+    loss_records.append(relative_loss)
     total_running_time += epoch_running_time
     time_records.append(total_running_time)  
     # Print progress
@@ -1006,26 +1080,48 @@ def taps(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, tau=0.0,
     return x, norm_records, loss_records, time_records
     return
 
-def sag(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, verbose=1):
+
+def sag(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, b = 10, verbose=1, MSAG=False, fstar=False, linesearch=False):
     """
     Stochastic average gradient algorithm.
-    This function is adapted from the code provided by ***
     """
     n, d = data.shape
     x = x_0.copy()
-    # init loss
-    loss_x0 = np.mean(loss.val(label, data @ x_0), axis=0) + reg * regularizer.val(x_0)
-    # init grad
-    g = np.mean(loss.prime(label, data @ x).reshape(-1, 1) * data, axis=0) + reg * regularizer.prime(x)
-    norm_records = [np.sqrt(g @ g)]
+    batches = partition_into_batches(n, b)
+    num_batches = len(batches)
+    indices= [0]
+    if num_batches>1:
+        indices = range(0,num_batches)
+    ln_lr = lr
+    loss_x0 =loss_minibatch(loss, label, data, x_0, reg, regularizer) # init loss
+    g = grad_minibatch(loss, label, data, x_0, reg, regularizer) # init grad
+    normg0 = np.sqrt(g @ g)
+    norm_records = [normg0]
     loss_records = [1.0]
-    # Old gradients
-    gradient_memory = np.zeros((n, d))
-    y = np.zeros(d)
-    for i in range(n): # initialize gradient table
-        gradient_memory[i] = loss.prime(label[i], data[i, :] @ x) * data[i, :] + reg * regularizer.prime(x)
-    y = np.sum(loss.prime(label, data @ x).reshape(-1, 1) * data, axis=0) + reg * regularizer.prime(x)
-    iis = np.random.randint(0, n, n * epoch + 1)
+    stepsize_records =[]
+
+
+    # Gradients table
+    gradient_memory = np.zeros((num_batches, d))
+    for i, batch in enumerate(batches):
+        gradient_memory[i] =  grad_minibatch(loss, label, data, x, reg, regularizer, batch)*(len(batch)/n) 
+    y = np.sum(gradient_memory, axis=0)
+
+    if fstar:
+        func = lambda x: loss_minibatch(loss, label, data, x, reg, regularizer)
+        fprime = lambda x: grad_minibatch(loss, label, data, x, reg, regularizer)
+        xstar, fstar, d = fmin_l_bfgs_b(func, x_0, fprime,factr=10.0, pgtol=1e-10, epsilon=1e-10)
+    else: 
+        fstar=0.0
+    if MSAG: # for adaptive step size
+        loss_memory = np.zeros(num_batches)
+        inner_memory = np.zeros(num_batches)
+        for i, batch in enumerate(batches):
+            loss_memory[i] =  loss_minibatch(loss, label, data, x, reg, regularizer, batch)*(len(batch)/n)
+            inner_memory[i] = np.inner(gradient_memory[i],x)
+        faverage = np.sum(loss_memory)
+        inneraverage = np.sum(inner_memory)
+        
     cnt = 0
     time_records, epoch_running_time, total_running_time = [0.0], 0.0, 0.0
     # updating records because completed one pass over the data.
@@ -1033,34 +1129,49 @@ def sag(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, verbose=1
                     x, norm_records, loss_records, time_records, 
                     total_running_time, epoch_running_time, verbose) 
     cnt += 1
-
-
-    for idx in range(len(iis)):
-        i = iis[idx]
-
-        start_time = time.time()
-        # gradient of (i-1)-th loss
-        grad_i = loss.prime(label[i], data[i, :] @ x) * data[i, :] + reg * regularizer.prime(x)
-        # update
-        # x -= lr * (grad_i - gradient_memory[i] + y)  not exactly same with Algorithm 1 in SAG paper
-        y += grad_i - gradient_memory[i]
-        x -= lr * y / n
-        gradient_memory[i] = grad_i
+    for idx in range(epoch):
+        combined = list(enumerate(batches))
+        random.shuffle(combined)
+        average_step=0
+        for i, batch in combined:
+            start_time = time.time()
+            gi = grad_minibatch(loss, label, data, x, reg, regularizer, batch)*(len(batch)/n) # gradient of (i-1)-th loss
+            y += (gi - gradient_memory[i]) 
+            gradient_memory[i] = gi
+            if MSAG:
+                li = loss_minibatch(loss, label, data, x, reg, regularizer, batch)*(len(batch)/n)
+                gidotx = np.inner(gi,x)
+                faverage += (li - loss_memory[i])
+                inneraverage += (gidotx-inner_memory[i])
+                loss_memory[i] = li
+                inner_memory[i] = gidotx
+                ada_lr = np.maximum(faverage+np.inner(y,x)-inneraverage-fstar,0)/(y @ y)
+                x -= ada_lr * y
+                average_step += ada_lr/num_batches
+            elif linesearch:
+                func = lambda x: loss_minibatch(loss, label, data, x, reg, regularizer)
+                ln_lr = armijo_backtracking(x, func, gi, -y, alpha=2*ln_lr, beta=0.8, max_iter=100)
+                x -= ln_lr * y
+                average_step += ln_lr/num_batches
+            else:
+                x -= lr * y
+                average_step += lr/num_batches
+            
         epoch_running_time += time.time() - start_time
+        cnt += 1
+        update_records_and_print(cnt, loss, loss_x0, regularizer, data, label, lr, reg, epoch, 
+                        x, norm_records, loss_records, time_records, 
+                        total_running_time, epoch_running_time, verbose, normg0)   
+        epoch_running_time = 0.0
+        stepsize_records.append(average_step)
 
-        if (idx + 1) % n == 0:
-            cnt += 1
-            update_records_and_print(cnt, loss, loss_x0, regularizer, data, label, lr, reg, epoch, 
-                             x, norm_records, loss_records, time_records, 
-                             total_running_time, epoch_running_time, verbose)   
-            epoch_running_time = 0.0
-            if tol is not None and norm_records[-1] <= tol:
-                return x, norm_records, loss_records, time_records
+        if tol is not None and norm_records[-1] <= tol:
+            return {'x' : x, 'norm_records' : norm_records, 'loss_records' : loss_records, 'time_records' : time_records, 'stepsize_records' :stepsize_records }
 
-    return x, norm_records, loss_records, time_records
+    return {'x' : x, 'norm_records' : norm_records, 'loss_records' : loss_records, 'time_records' : time_records, 'stepsize_records' :stepsize_records }
 
 
-def svrg(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, verbose=1):
+def svrg(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, b=10, verbose=1):
     """
     Stochastic variance reduction gradient algorithm.
 
@@ -1072,22 +1183,23 @@ def svrg(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, verbose=
     to the step where we do a full pass of dataset at the reference point,
     it means that the effective passes should be added one after this step.
     """
-    max_effective_pass = epoch // 2
+    max_effective_pass = (epoch) // 2
     n, d = data.shape
     x = x_0.copy()
-    # init loss
-    loss_x0 = np.mean(loss.val(label, data @ x_0), axis=0) + reg * regularizer.val(x_0)
-    # init grad
-    g = np.mean(loss.prime(label, data @ x).reshape(-1, 1) * data, axis=0) + reg * regularizer.prime(x)
-    norm_records, time_records, total_running_time = [np.sqrt(g @ g)], [0.0], 0.0
+    batches = partition_into_batches(n, b)
+    num_batches = len(batches)
+    indices = range(0,num_batches-1)
+    loss_x0 =loss_minibatch(loss, label, data, x_0, reg, regularizer) # init loss
+    g = grad_minibatch(loss, label, data, x_0, reg, regularizer) # init grad
+    normg0 = np.sqrt(g @ g)
+    norm_records, time_records, total_running_time = [normg0], [0.0], 0.0
     loss_records = [1.0]
     effective_pass = 0
-    for idx in range(max_effective_pass):
 
+    for idx in range(max_effective_pass):
         start_time = time.time()
         x_ref = x.copy()
-        tot_grad = np.mean(loss.prime(label, data @ x_ref).reshape(-1, 1) * data, axis=0) + \
-                   reg * regularizer.prime(x_ref)
+        tot_grad = grad_minibatch(loss, label, data, x_ref, reg, regularizer)
         x -= lr * tot_grad
         epoch_running_time = time.time() - start_time
 
@@ -1097,32 +1209,21 @@ def svrg(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, verbose=
         if tol is not None and norm_records[-1] <= tol:
             return x, norm_records, loss_records, time_records
 
-        iis = np.random.randint(low=0, high=n, size=n)
         epoch_running_time = 0.0
-
-        for idx in range(len(iis)):  # inner loop
-            i = iis[idx]
+        combined = list(zip(indices,batches))
+        random.shuffle(combined)
+        for i, batch in combined:
             start_time = time.time()
-            grad_i = loss.prime(label[i], data[i, :] @ x) * data[i, :] + reg * regularizer.prime(x)
-            grad_i_ref = loss.prime(label[i], data[i, :] @ x_ref) * data[i, :] + reg * regularizer.prime(x_ref)
-            d_i = grad_i - grad_i_ref + tot_grad
+            grad_i = grad_minibatch(loss, label, data, x, reg, regularizer, batch) 
+            grad_i_ref = grad_minibatch(loss, label, data, x_ref, reg, regularizer, batch)
+            d_i = tot_grad+ grad_i - grad_i_ref 
             x -= lr * d_i
             epoch_running_time += time.time() - start_time
 
         effective_pass += 1    
         update_records_and_print(effective_pass, loss, loss_x0, regularizer, data, label, lr, reg, epoch, 
                              x, norm_records, loss_records, time_records, 
-                             total_running_time, epoch_running_time, verbose)
-        # effective_pass += 1
-        # g = np.mean(loss.prime(label, data @ x).reshape(-1, 1) * data, axis=0) + reg * regularizer.prime(x)
-        # norm_records.append(np.sqrt(g @ g))
-        # total_running_time += epoch_running_time
-        # time_records.append(total_running_time)
-        # if verbose == 1:
-        #     logging.info(
-        #         "| end of effective pass {:d} | time: {:f}s | norm of gradient {:f} |".format(effective_pass,
-        #                                                                                       epoch_running_time,
-        #                                                                                       norm_records[-1]))
+                             total_running_time, epoch_running_time, verbose, normg0)
         if tol is not None and norm_records[-1] <= tol:
             return x, norm_records, loss_records, time_records
 

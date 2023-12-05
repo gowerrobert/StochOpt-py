@@ -78,7 +78,9 @@ def plot_iter(result_dict, problem, title, save_path, threshold=1e-8, gradplot=T
 
 def run_algorithm(algo_name, algo, algo_kwargs, n_repeat):
     logging.info("------START {}------".format(algo_name))
-    grad_iter, loss_iter, grad_time = [], [],  []
+    grad_iter, loss_iter, grad_time, stepsizes, slack = [], [], [], [], []
+    is_stepsize_key = False
+    is_slack_key = False
     for i in range(n_repeat):
         logging.info("{}-th repetition:".format(i + 1))
         final_w, norm, losses, times = algo(**algo_kwargs)
@@ -121,6 +123,14 @@ def lipschitz_logistic(X, reg):
     n, d = X.shape
     return np.linalg.norm(X, ord=2) ** 2 / (4. * n) + reg
 
+def compute_L(X, reg, loss_type,regularizor_type):
+    if loss_type == "L2" and regularizor_type == "L2":
+        L =  lipschitz_ridge(X, reg)
+    elif loss_type == "Logistic" and regularizor_type == "L2":
+        L =  lipschitz_logistic(X, reg)
+    else:
+        return None
+    return L
 
 def max_Li_ridge(X, reg):
     return np.max(np.sum(X ** 2, axis=1)) + reg
@@ -128,6 +138,7 @@ def max_Li_ridge(X, reg):
 
 def max_Li_logistic(X, reg):
     return 0.25*np.max(np.sum(X ** 2, axis=1)) + reg
+
 
 def compute_L_max(X, reg, loss_type,regularizor_type):
     if loss_type == "L2" and regularizor_type == "L2":
