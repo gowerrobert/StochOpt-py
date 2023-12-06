@@ -44,7 +44,6 @@ def partition_into_batches(n, b):
     # Calculate the number of full batches and the size of the last batch
     num_full_batches = n // b
     last_batch_size = n % b if n % b != 0 else 0
-
     # Create the partitions
     partitions = [list(range(i * b, (i + 1) * b)) for i in range(num_full_batches)]
 
@@ -1194,6 +1193,7 @@ def svrg(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, b=10, ve
     normg0 = np.sqrt(g @ g)
     norm_records, time_records, total_running_time = [normg0], [0.0], 0.0
     loss_records = [1.0]
+    stepsize_records =[]
     effective_pass = 0
 
     for idx in range(max_effective_pass):
@@ -1212,6 +1212,7 @@ def svrg(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, b=10, ve
         epoch_running_time = 0.0
         combined = list(zip(indices,batches))
         random.shuffle(combined)
+        average_step =0
         for i, batch in combined:
             start_time = time.time()
             grad_i = grad_minibatch(loss, label, data, x, reg, regularizer, batch) 
@@ -1219,15 +1220,17 @@ def svrg(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, b=10, ve
             d_i = tot_grad+ grad_i - grad_i_ref 
             x -= lr * d_i
             epoch_running_time += time.time() - start_time
-
+            average_step += lr/num_batches
         effective_pass += 1    
+        stepsize_records.append(average_step)
         update_records_and_print(effective_pass, loss, loss_x0, regularizer, data, label, lr, reg, epoch, 
                              x, norm_records, loss_records, time_records, 
                              total_running_time, epoch_running_time, verbose, normg0)
         if tol is not None and norm_records[-1] <= tol:
-            return x, norm_records, loss_records, time_records
+            return  {'x' : x, 'norm_records' : norm_records, 'loss_records' : loss_records, 'time_records' : time_records, 'stepsize_records' :stepsize_records }
+        # x, norm_records, loss_records, time_records
 
-    return x, norm_records, loss_records, time_records
+    return  {'x' : x, 'norm_records' : norm_records, 'loss_records' : loss_records, 'time_records' : time_records, 'stepsize_records' :stepsize_records }
 
 
 def snm(loss, data, label, reg, epoch, x_0, tol=None, verbose=1):
