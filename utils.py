@@ -78,18 +78,11 @@ def plot_iter(result_dict, problem, title, save_path, threshold=1e-8, gradplot=T
 
 def run_algorithm(algo_name, algo, algo_kwargs, n_repeat):
     logging.info("------START {}------".format(algo_name))
-    grad_iter, loss_iter, grad_time, stepsizes, slack = [], [], [], [], []
-    is_stepsize_key = False
-    is_slack_key = False
     for i in range(n_repeat):
         logging.info("{}-th repetition:".format(i + 1))
-        final_w, norm, losses, times = algo(**algo_kwargs)
-        grad_iter.append(norm)
-        loss_iter.append(losses)
-        grad_time.append(times)
+        output = algo(**algo_kwargs)
     logging.info("------END {}------".format(algo_name))
-    # print("MAE: {}".format(np.mean(np.abs(algo_kwargs['data']@final_w - algo_kwargs['label']))))
-    return grad_iter, loss_iter, grad_time
+    return output
 
 
 def save(path_grad_iter, grad_iter, path_loss_iter, loss_iter, path_grad_time, grad_time):
