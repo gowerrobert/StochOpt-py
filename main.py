@@ -161,16 +161,15 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
     dict_stepsize_iter = {}
     dict_slack_iter = {}
     def collect_save_dictionaries(algo_name, output_dict):
-        # "grad_iter" : grad_iter, "loss_iter" : loss_iter, "grad_time" : grad_time, "stepsizes" : stepsizes
-        dict_grad_iter[algo_name] = output_dict['grad_iter']
-        dict_loss_iter[algo_name] = output_dict['loss_iter']
-        dict_time_iter[algo_name] = output_dict['grad_time']
+        dict_grad_iter[algo_name] = output_dict['norm_records']
+        dict_loss_iter[algo_name] = output_dict['loss_records']
+        dict_time_iter[algo_name] = output_dict['time_records']
         if "stepsizes" in output_dict:
             dict_stepsize_iter[algo_name] = output_dict['stepsizes']
         if "slack" in output_dict:
             dict_slack_iter[algo_name] = output_dict['slack']
-            
-        utils.save(folder_path, algo_name, dict_grad_iter, dict_loss_iter, dict_time_iter)
+        utils.save(folder_path+"/"+algo_name, dict_grad_iter, dict_loss_iter, dict_time_iter)
+
 
     if opt.run_svrg2:
         np.random.seed(0)  # random seed to reproduce the experiments
