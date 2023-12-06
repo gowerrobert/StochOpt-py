@@ -1163,10 +1163,9 @@ def sag(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, b = 10, v
                         total_running_time, epoch_running_time, verbose, normg0)   
         epoch_running_time = 0.0
         stepsize_records.append(average_step)
-
+        
         if tol is not None and norm_records[-1] <= tol:
             return {'x' : x, 'norm_records' : norm_records, 'loss_records' : loss_records, 'time_records' : time_records, 'stepsize_records' :stepsize_records }
-
     return {'x' : x, 'norm_records' : norm_records, 'loss_records' : loss_records, 'time_records' : time_records, 'stepsize_records' :stepsize_records }
 
 

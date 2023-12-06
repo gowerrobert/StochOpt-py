@@ -15,6 +15,8 @@ def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--name', action='store', dest='name',
                         help="name of setup")
+    parser.add_argument('--save', action='store', type=bool, dest='save', default=False)
+    parser.add_argument('--use_saved', action='store', type=bool, dest='use_saved', default=False)
     parser.add_argument('--type', action='store', dest='type', type=int, default=0,
                         help="type of problem, 0 means classification and 1 means regression.")
     parser.add_argument('--dataset', action='store', dest='data_set',
@@ -149,6 +151,7 @@ def set_minibatch_size(n,b):
 
 def run(opt, folder_path, criterion, penalty, reg, X, y):
     n, d = X.shape
+    opt.b = int(set_minibatch_size(n,opt.b)) # set minibatch size
     logging.info("Number of data points: {:d}; Number of features: {:d}".format(n, d))
     epochs = opt.epochs
     n_rounds = opt.n_rounds
@@ -161,14 +164,17 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
     dict_stepsize_iter = {}
     dict_slack_iter = {}
     def collect_save_dictionaries(algo_name, output_dict):
-        dict_grad_iter[algo_name] = output_dict['norm_records']
-        dict_loss_iter[algo_name] = output_dict['loss_records']
-        dict_time_iter[algo_name] = output_dict['time_records']
+        # "grad_iter" : grad_iter, "loss_iter" : loss_iter, "grad_time" : grad_time, "stepsizes" : stepsizes
+        dict_grad_iter[algo_name] = output_dict['grad_iter']
+        dict_loss_iter[algo_name] = output_dict['loss_iter']
+        dict_time_iter[algo_name] = output_dict['grad_time']
         if "stepsizes" in output_dict:
             dict_stepsize_iter[algo_name] = output_dict['stepsizes']
         if "slack" in output_dict:
             dict_slack_iter[algo_name] = output_dict['slack']
-        utils.save(folder_path+"/"+algo_name, dict_grad_iter, dict_loss_iter, dict_time_iter)
+        if opt.save:  
+            utils.save(folder_path, algo_name, dict_grad_iter, dict_loss_iter, dict_time_iter)
+
 
 
     if opt.run_svrg2:
@@ -176,20 +182,12 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
         svrg2_lr = opt.lr  # 0.001*reg
         kwargs = {"loss": criterion, "data": X, "label": y, "lr": svrg2_lr, "reg": reg, "dist": dist, "epoch": epochs,
                   "x_0": x_0.copy(), "regularizer": penalty, "tol": opt.tol}
-        grad_iter, loss_iter, grad_time = utils.run_algorithm(
-            algo_name="SVRG2", algo=svrg2, algo_kwargs=kwargs, n_repeat=n_rounds)
- 
-        # dict_acc_iter["SVRG2"] = grad_iter
-        dict_grad_iter["SVRG2"] = grad_iter
-        dict_loss_iter["SVRG2"] = loss_iter
-        dict_time_iter["SVRG2"] = grad_time
-        utils.save(os.path.join(folder_path, 'svrg2_grad_iter'), grad_iter,
-                   os.path.join(folder_path, 'svrg2_loss_iter'), loss_iter,
-                   os.path.join(folder_path, 'svrg2_grad_time'), grad_time)
-    else:
-        grad_iter, loss_iter, grad_time = utils.load(os.path.join(folder_path, 'svrg2_grad_iter'),
-                                          os.path.join(folder_path, 'svrg2_loss_iter'),
-                                          os.path.join(folder_path, 'svrg2_grad_time'))
+        algo_name = "SVRG2"
+        output_dict = utils.run_algorithm(algo_name=algo_name, algo=svrg2, algo_kwargs=kwargs, n_repeat=n_repetition)
+        collect_save_dictionaries(algo_name, output_dict)
+    elif opt.use_saved:
+        algo_name = "SVRG2"
+        grad_iter, loss_iter, grad_time = utils.load(folder_path, algo_name)
         if grad_iter:
             dict_grad_iter["SVRG2"] = grad_iter
 
@@ -205,19 +203,12 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
 
         kwargs = {"loss": criterion, "data": X, "label": y, "lr": opt.lr, "reg": reg, "dist": dist, "epoch": epochs,
                   "x_0": x_0.copy(), "regularizer": penalty, "tol": opt.tol}
-        grad_iter, loss_iter, grad_time = utils.run_algorithm(
-            algo_name="SAN", algo=san, algo_kwargs=kwargs, n_repeat=n_rounds)
-            # loss_iter,
-        dict_grad_iter["SAN"] = grad_iter
-        dict_loss_iter["SAN"] = loss_iter
-        dict_time_iter["SAN"] = grad_time
-        utils.save(os.path.join(folder_path, 'san_grad_iter'), grad_iter,
-                   os.path.join(folder_path, 'san_loss_iter'), loss_iter,
-                   os.path.join(folder_path, 'san_grad_time'), grad_time)
-    else:
-        grad_iter, loss_iter, grad_time = utils.load(os.path.join(folder_path, 'san_grad_iter'),
-                                          os.path.join(folder_path, 'san_loss_iter'),
-                                          os.path.join(folder_path, 'san_grad_time'))
+        algo_name = "SAN"
+        output_dict = utils.run_algorithm(algo_name=algo_name, algo=san, algo_kwargs=kwargs, n_repeat=n_repetition)
+        collect_save_dictionaries(algo_name, output_dict)
+    elif opt.use_saved:
+        algo_name = "SAN"
+        grad_iter, loss_iter, grad_time = utils.load(folder_path, algo_name)
         if grad_iter:
             dict_grad_iter["SAN"] = grad_iter
 
@@ -225,18 +216,13 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
         np.random.seed(0)  # random seed to reproduce the experiments
         kwargs = {"loss": criterion, "data": X, "label": y, "reg": reg, "epoch": epochs,
                   "x_0": x_0.copy(), "regularizer": penalty, "tol": opt.tol}
-        grad_iter, loss_iter, grad_time = utils.run_algorithm(algo_name="SANA", algo=sana,
-                                                   algo_kwargs=kwargs, n_repeat=n_rounds)
-        dict_grad_iter["SANA"] = grad_iter 
-        dict_loss_iter["SANA"] = loss_iter
-        dict_time_iter["SANA"] = grad_time
-        utils.save(os.path.join(folder_path, 'sana_grad_iter'), grad_iter,
-                   os.path.join(folder_path, 'sana_loss_iter'), loss_iter,
-                   os.path.join(folder_path, 'sana_grad_time'), grad_time)
-    else:
-        grad_iter, loss_iter, grad_time = utils.load(os.path.join(folder_path, 'sana_grad_iter'),
-                                          os.path.join(folder_path, 'sana_loss_iter'),
-                                          os.path.join(folder_path, 'sana_grad_time'))
+        algo_name = "SANA"          
+        output_dict = utils.run_algorithm(algo_name="SANA", algo=sana,
+                                                   algo_kwargs=kwargs, n_repeat=n_repetition)
+        collect_save_dictionaries(algo_name, output_dict)
+    elif opt.use_saved:
+        algo_name = "SANA" 
+        grad_iter, loss_iter, grad_time = utils.load(folder_path, algo_name)
         if grad_iter:
             dict_grad_iter["SANA"] = grad_iter
 
@@ -244,18 +230,12 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
         np.random.seed(0)  # random seed to reproduce the experiments
         kwargs = {"loss": criterion, "data": X, "label": y, "reg": reg, "epoch": epochs,
                   "x_0": x_0.copy(), "tol": opt.tol}
-        grad_iter, loss_iter, grad_time = utils.run_algorithm(
-            algo_name="VSN", algo=vsn, algo_kwargs=kwargs, n_repeat=n_rounds)
-        dict_grad_iter["VSN"] = grad_iter
-        dict_loss_iter["VSN"] = loss_iter
-        dict_time_iter["VSN"] = grad_time
-        utils.save(os.path.join(folder_path, 'vsn_grad_iter'), grad_iter,
-                   os.path.join(folder_path, 'vsn_loss_iter'), loss_iter,
-                   os.path.join(folder_path, 'vsn_grad_time'), grad_time)
-    else:
-        grad_iter, loss_iter, grad_time = utils.load(os.path.join(folder_path, 'vsn_grad_iter'),
-                                          os.path.join(folder_path, 'vsn_loss_iter'),
-                                          os.path.join(folder_path, 'vsn_grad_time'))
+        algo_name ="VSN"
+        output_dict = utils.run_algorithm(algo_name=algo_name, algo=vsn, algo_kwargs=kwargs, n_repeat=n_repetition)
+        collect_save_dictionaries(algo_name, output_dict)
+    elif opt.use_saved:
+        algo_name = "VSN" 
+        grad_iter, loss_iter, grad_time = utils.load(folder_path, algo_name)
         if grad_iter:
             dict_grad_iter["VSN"] = grad_iter
 
@@ -264,18 +244,11 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
         np.random.seed(0)  # random seed to reproduce the experiments
         kwargs = {"loss": criterion, "data": X, "label": y, "reg": reg, "epoch": epochs,
                   "x_0": x_0.copy(), "tol": opt.tol}
-        grad_iter, loss_iter, grad_time = utils.run_algorithm(
-            algo_name="SNM", algo=snm, algo_kwargs=kwargs, n_repeat=n_rounds)
-        dict_grad_iter["SNM"] = grad_iter
-        dict_loss_iter["SNM"] = loss_iter
-        dict_time_iter["SNM"] = grad_time
-        utils.save(os.path.join(folder_path, 'snm_grad_iter'), grad_iter,
-                   os.path.join(folder_path, 'snm_loss_iter'), loss_iter,
-                   os.path.join(folder_path, 'snm_grad_time'), grad_time)
-    else:
-        grad_iter, loss_iter, grad_time = utils.load(os.path.join(folder_path, 'snm_grad_iter'),
-                                          os.path.join(folder_path, 'snm_loss_iter'),
-                                          os.path.join(folder_path, 'snm_grad_time'))
+        output_dict = utils.run_algorithm(
+            algo_name="SNM", algo=snm, algo_kwargs=kwargs, n_repeat=n_repetition)
+        collect_save_dictionaries("SNM", output_dict)
+    elif opt.use_saved:
+        grad_iter, loss_iter, grad_time = utils.load(folder_path, "SNM")
         if grad_iter:
             dict_grad_iter["SNM"] = grad_iter
 
@@ -305,10 +278,8 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
         output_dict = utils.run_algorithm(
             algo_name="Newton", algo=newton, algo_kwargs=kwargs, n_repeat=n_rounds)
         collect_save_dictionaries("Newton", output_dict)
-    else:
-        grad_iter, loss_iter, grad_time = utils.load(os.path.join(folder_path, 'newton_grad_iter'),
-                                          os.path.join(folder_path, 'newton_loss_iter'),
-                                          os.path.join(folder_path, 'newton_grad_time'))
+    elif opt.use_saved:
+        grad_iter, loss_iter, grad_time = utils.load(folder_path, "Newton")
         if grad_iter:
             dict_grad_iter["Newton"] = grad_iter
 
@@ -513,7 +484,7 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
         else:
             b= opt.b
             sag_lr = 1/L_max#1/(L* (n/b)*(b-1)/(n-1) + ((n-b)/(n-1))*L_max/b ) #opt.b*1.0/(4.0*L_max)
-            sag_lr = sag_lr/16
+            sag_lr = sag_lr
         # in the SAG paper, the lr given by theory is 1/16L.
         # sag_lr = 0.25 / (max_squared_sum + 4.0 * reg)  # theory lr
         logging.info("Learning rate used for SAG: {:f}".format(sag_lr))
@@ -522,10 +493,11 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
         output_dict = utils.run_algorithm(
             algo_name="SAG", algo=sag, algo_kwargs=kwargs, n_repeat=n_rounds)
         collect_save_dictionaries("SAG", output_dict)
-    # else:
-    #     grad_iter, loss_iter, grad_time = utils.load(folder_path, "SAG")
-    #     if grad_iter:
-    #         dict_grad_iter["SAG"] = grad_iter
+    elif opt.use_saved:
+        grad_iter, loss_iter, grad_time = utils.load(folder_path, "SAG")
+        if grad_iter:
+            dict_grad_iter["SAG"] = grad_iter
+
     if opt.run_sag_lin:
         np.random.seed(0)  # random seed to reproduce the experiments
         logging.info("Learning rate used for SAG: {:f}".format(sag_lr))
@@ -580,7 +552,7 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
     #         dict_grad_iter["SVRG"] = grad_iter
 
 ## Final return of run()     
-    return dict_grad_iter, dict_loss_iter, dict_time_iter #, opt.data_set, opt.name, folder_path
+    return dict_grad_iter, dict_loss_iter, dict_time_iter, dict_stepsize_iter
 
 if __name__ == '__main__': 
   
@@ -594,11 +566,5 @@ if __name__ == '__main__':
     # utils.plot_iter(result_dict=dict_slack_iter, problem=opt.data_set, title = opt.name + "-slack" + "-reg-" + "{:.2e}".format(reg), save_path=folder_path, tol=opt.tol, yaxislabel=r"$min_i s_i^t$")
     # utils.plot_iter(result_dict=dict_loss_iter, problem=opt.data_set, title = opt.name + "-max-loss" + "-reg-" + "{:.2e}".format(reg), save_path=folder_path, yaxislabel=r"$\max_i f_i(w^t)$")
     utils.plot_iter(result_dict=dict_stepsize_iter, problem=opt.data_set, title = opt.name + "-stepsize" + "-reg-" + "{:.2e}".format(reg), save_path=folder_path, yaxislabel="step sizes")
-    # Some code Shuang wrote
-    dict_time_iter_sum = {} 
-    for key in dict_time_iter: 
-        dict_time_iter_sum[key] = sum(sum(np.array(dict_time_iter[key]))) 
-    # Some code Shuang wrote
-    with open(os.path.join(folder_path, 'dict_time_iter_sum_'+'M'+ str(opt.beta)+'-reg'+ "{:.2e}".format(reg)), 'wb') as fp:
-         pickle.dump(dict_time_iter_sum, fp)
+
       
