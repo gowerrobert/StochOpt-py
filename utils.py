@@ -85,8 +85,8 @@ def run_algorithm(algo_name, algo, algo_kwargs, n_repeat):
     return output
 
 
-def save(path_grad_iter, grad_iter, path_loss_iter, loss_iter, path_grad_time, grad_time):
-    with open(path_grad_iter, 'wb') as fp:
+def save(path, grad_iter, path_loss_iter, time):
+    with open(path+"", 'wb') as fp:
         pickle.dump(grad_iter, fp)
     with open(path_grad_time, 'wb') as fp:
         pickle.dump(grad_time, fp)
