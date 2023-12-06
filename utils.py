@@ -83,22 +83,27 @@ def run_algorithm(algo_name, algo, algo_kwargs, n_repeat):
     is_slack_key = False
     for i in range(n_repeat):
         logging.info("{}-th repetition:".format(i + 1))
-        final_w, norm, losses, times = algo(**algo_kwargs)
-        grad_iter.append(norm)
-        loss_iter.append(losses)
-        grad_time.append(times)
+        # import pdb; pdb.set_trace()
+        output = algo(**algo_kwargs)
+        # final_w, norm, losses, times = algo(**algo_kwargs)
+        # grad_iter.append(norm)
+        # loss_iter.append(losses)
+        # grad_time.append(times)
     logging.info("------END {}------".format(algo_name))
     # print("MAE: {}".format(np.mean(np.abs(algo_kwargs['data']@final_w - algo_kwargs['label']))))
-    return grad_iter, loss_iter, grad_time
+    return output
+    # grad_iter, loss_iter, grad_time
 
 
-def save(path_grad_iter, grad_iter, path_loss_iter, loss_iter, path_grad_time, grad_time):
-    with open(path_grad_iter, 'wb') as fp:
-        pickle.dump(grad_iter, fp)
-    with open(path_grad_time, 'wb') as fp:
-        pickle.dump(grad_time, fp)
-    with open(path_loss_iter, 'wb') as fp:
-        pickle.dump(loss_iter, fp)
+def save(path, dict_grad_iter, dict_loss_iter, dict_time_iter):
+    
+# (path_grad_iter, grad_iter, path_loss_iter, loss_iter, path_grad_time, grad_time):
+    with open(path+"grad_iter", 'wb') as fp:
+        pickle.dump(dict_grad_iter, fp)
+    with open(path+"grad_time", 'wb') as fp:
+        pickle.dump(dict_time_iter, fp)
+    with open(path+"loss_iter", 'wb') as fp:
+        pickle.dump(dict_loss_iter, fp)
 
 def load(path_grad_iter, path_loss_iter, path_grad_time):
     grad_iter, loss_iter, grad_time = None, None, None
@@ -133,11 +138,11 @@ def compute_L(X, reg, loss_type,regularizor_type):
     return L
 
 def max_Li_ridge(X, reg):
-    return np.max(np.sum(X ** 2, axis=1)) + reg
+    return np.max(np.sum(X ** 2, axis=0)) + reg
 
 
 def max_Li_logistic(X, reg):
-    return 0.25*np.max(np.sum(X ** 2, axis=1)) + reg
+    return 0.25*np.max(np.sum(X ** 2, axis=0)) + reg
 
 
 def compute_L_max(X, reg, loss_type,regularizor_type):

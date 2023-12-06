@@ -38,7 +38,7 @@ def get_args():
                         help="name of the lamb scheduling")
     parser.add_argument('--line-search', action='store', default=False, dest='line_search',
                         help="option to use a line search")
-
+    parser.add_argument('--b', action='store', type=int, dest='b', default=None,  help="batchsize")
     parser.add_argument('--delta', action='store', type=float, dest='delta', default=None)
     parser.add_argument("--lr", action='store', type=float, dest='lr', default=1.0)
     parser.add_argument("--beta", action='store', type=float, dest='beta', default=0.0)
@@ -82,6 +82,8 @@ def get_args():
     parser.add_argument('--run_spsdam', default=False,
                         type=lambda x: (str(x).lower() in ['true', '1', 'yes']))
     parser.add_argument('--run_spsL1', default=False,
+                        type=lambda x: (str(x).lower() in ['true', '1', 'yes']))
+    parser.add_argument('--run_spsL1eq', default=False,
                         type=lambda x: (str(x).lower() in ['true', '1', 'yes']))
     parser.add_argument('--run_sgd', default=False,
                         type=lambda x: (str(x).lower() in ['true', '1', 'yes']))
@@ -191,16 +193,14 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
     dict_stepsize_iter = {}
     dict_slack_iter = {}
     def collect_save_dictionaries(algo_name, output_dict):
-        # "grad_iter" : grad_iter, "loss_iter" : loss_iter, "grad_time" : grad_time, "stepsizes" : stepsizes
-        dict_grad_iter[algo_name] = output_dict['grad_iter']
-        dict_loss_iter[algo_name] = output_dict['loss_iter']
-        dict_time_iter[algo_name] = output_dict['grad_time']
+        dict_grad_iter[algo_name] = output_dict['norm_records']
+        dict_loss_iter[algo_name] = output_dict['loss_records']
+        dict_time_iter[algo_name] = output_dict['time_records']
         if "stepsizes" in output_dict:
             dict_stepsize_iter[algo_name] = output_dict['stepsizes']
         if "slack" in output_dict:
             dict_slack_iter[algo_name] = output_dict['slack']
-            
-        utils.save(folder_path, algo_name, dict_grad_iter, dict_loss_iter, dict_time_iter)
+        utils.save(folder_path+"/"+algo_name, dict_grad_iter, dict_loss_iter, dict_time_iter)
 
     if opt.run_svrg2:
         np.random.seed(0)  # random seed to reproduce the experiments
@@ -747,7 +747,8 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
         else:
             b= opt.b
             sag_lr = 1/L_max#1/(L* (n/b)*(b-1)/(n-1) + ((n-b)/(n-1))*L_max/b ) #opt.b*1.0/(4.0*L_max)
-            sag_lr = sag_lr/16
+            sag_lr = sag_lr
+        # import pdb; pdb.set_trace()
         # in the SAG paper, the lr given by theory is 1/16L.
         # sag_lr = 0.25 / (max_squared_sum + 4.0 * reg)  # theory lr
         logging.info("Learning rate used for SAG: {:f}".format(sag_lr))
@@ -814,7 +815,7 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
     #         dict_grad_iter["SVRG"] = grad_iter
 
 ## Final return of run()     
-    return dict_grad_iter, dict_loss_iter, dict_time_iter #, opt.data_set, opt.name, folder_path
+    return dict_grad_iter, dict_loss_iter, dict_time_iter, dict_stepsize_iter, dict_slack_iter  #, opt.data_set, opt.name, folder_path
 
 if __name__ == '__main__': 
   
