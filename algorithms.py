@@ -1088,9 +1088,6 @@ def sag(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, b = 10, v
     x = x_0.copy()
     batches = partition_into_batches(n, b)
     num_batches = len(batches)
-    indices= [0]
-    if num_batches>1:
-        indices = range(0,num_batches)
     ln_lr = lr
     loss_x0 =loss_minibatch(loss, label, data, x_0, reg, regularizer) # init loss
     g = grad_minibatch(loss, label, data, x_0, reg, regularizer) # init grad
@@ -1106,10 +1103,10 @@ def sag(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, b = 10, v
         gradient_memory[i] =  grad_minibatch(loss, label, data, x, reg, regularizer, batch)*(len(batch)/n) 
     y = np.sum(gradient_memory, axis=0)
 
-    if fstar:
+    if fstar == True:
         func = lambda x: loss_minibatch(loss, label, data, x, reg, regularizer)
         fprime = lambda x: grad_minibatch(loss, label, data, x, reg, regularizer)
-        xstar, fstar, d = fmin_l_bfgs_b(func, x_0, fprime,factr=10.0, pgtol=1e-10, epsilon=1e-10)
+        xstar, fstar, d = fmin_l_bfgs_b(func, x_0, fprime,factr=1.0, pgtol=1e-18, epsilon=1e-18)
     else: 
         fstar=0.0
     if MSAG: # for adaptive step size
@@ -1129,10 +1126,13 @@ def sag(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, b = 10, v
                     total_running_time, epoch_running_time, verbose) 
     cnt += 1
     for idx in range(epoch):
-        combined = list(enumerate(batches))
-        random.shuffle(combined)
+        # combined = list(enumerate(batches))
+        # random.shuffle(combined)
         average_step=0
-        for i, batch in combined:
+        # for i, batch in combined:
+        for j in range(num_batches):
+            i = np.random.randint(0, num_batches)
+            batch = batches[i]
             start_time = time.time()
             gi = grad_minibatch(loss, label, data, x, reg, regularizer, batch)*(len(batch)/n) # gradient of (i-1)-th loss
             y += (gi - gradient_memory[i]) 
@@ -1144,6 +1144,8 @@ def sag(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, b = 10, v
                 inneraverage += (gidotx-inner_memory[i])
                 loss_memory[i] = li
                 inner_memory[i] = gidotx
+                if fstar == "estimate":
+                    fstar = fstar 
                 ada_lr = np.maximum(faverage+np.inner(y,x)-inneraverage-fstar,0)/(y @ y)
                 x -= ada_lr * y
                 average_step += ada_lr/num_batches
@@ -1205,14 +1207,15 @@ def svrg(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, b=10, ve
         update_records_and_print(effective_pass, loss, loss_x0, regularizer, data, label, lr, reg, epoch, 
                              x, norm_records, loss_records, time_records, 
                              total_running_time, epoch_running_time, verbose)
-        if tol is not None and norm_records[-1] <= tol:
-            return x, norm_records, loss_records, time_records
 
         epoch_running_time = 0.0
-        combined = list(zip(indices,batches))
-        random.shuffle(combined)
+        # combined = list(zip(indices,batches))
+        # random.shuffle(combined)
         average_step =0
-        for i, batch in combined:
+        # for i, batch in combined:
+        for j in range(num_batches):
+            i = np.random.randint(0, num_batches)
+            batch = batches[i]       
             start_time = time.time()
             grad_i = grad_minibatch(loss, label, data, x, reg, regularizer, batch) 
             grad_i_ref = grad_minibatch(loss, label, data, x_ref, reg, regularizer, batch)
@@ -1227,8 +1230,6 @@ def svrg(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, b=10, ve
                              total_running_time, epoch_running_time, verbose, normg0)
         if tol is not None and norm_records[-1] <= tol:
             return  {'x' : x, 'norm_records' : norm_records, 'loss_records' : loss_records, 'time_records' : time_records, 'stepsize_records' :stepsize_records }
-        # x, norm_records, loss_records, time_records
-
     return  {'x' : x, 'norm_records' : norm_records, 'loss_records' : loss_records, 'time_records' : time_records, 'stepsize_records' :stepsize_records }
 
 

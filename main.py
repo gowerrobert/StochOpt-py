@@ -483,8 +483,8 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
             sag_lr = 0.01
         else:
             b= opt.b
-            sag_lr = 1/L_max#1/(L* (n/b)*(b-1)/(n-1) + ((n-b)/(n-1))*L_max/b ) #opt.b*1.0/(4.0*L_max)
-            sag_lr = sag_lr
+            sag_lr = 1/L_max#1/(L* (n/b)*(b-1)/(n-1) + ((n-b)/(n-1))*Ln_max/b ) #opt.b*1.0/(4.0*L_max)
+            sag_lr = sag_lr/16
         # in the SAG paper, the lr given by theory is 1/16L.
         # sag_lr = 0.25 / (max_squared_sum + 4.0 * reg)  # theory lr
         logging.info("Learning rate used for SAG: {:f}".format(sag_lr))
@@ -493,10 +493,10 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
         output_dict = utils.run_algorithm(
             algo_name="SAG", algo=sag, algo_kwargs=kwargs, n_repeat=n_rounds)
         collect_save_dictionaries("SAG", output_dict)
-    elif opt.use_saved:
-        grad_iter, loss_iter, grad_time = utils.load(folder_path, "SAG")
-        if grad_iter:
-            dict_grad_iter["SAG"] = grad_iter
+    # elif opt.use_saved:
+    #     grad_iter, loss_iter, grad_time = utils.load(folder_path, "SAG")
+    #     if grad_iter:
+    #         dict_grad_iter["SAG"] = grad_iter
 
     if opt.run_sag_lin:
         np.random.seed(0)  # random seed to reproduce the experiments
@@ -514,7 +514,7 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
     if opt.run_msag:
         np.random.seed(0)  # random seed to reproduce the experiments
         kwargs = {"loss": criterion, "data": X, "label": y, "lr": 1, "reg": reg,
-                  "epoch": epochs, "x_0": x_0.copy(), "regularizer": penalty, "tol": opt.tol, "b" : opt.b, "MSAG" : True, "fstar" : 1.0}
+                  "epoch": epochs, "x_0": x_0.copy(), "regularizer": penalty, "tol": opt.tol, "b" : opt.b, "MSAG" : True, "fstar" : True}
         output_dict = utils.run_algorithm(
             algo_name="MSAG", algo=sag, algo_kwargs=kwargs, n_repeat=n_rounds)
         collect_save_dictionaries("MSAG", output_dict)
