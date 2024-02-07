@@ -1188,7 +1188,6 @@ def svrg(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, b=10, ve
     x = x_0.copy()
     batches = partition_into_batches(n, b)
     num_batches = len(batches)
-    indices = range(0,num_batches-1)
     loss_x0 =loss_minibatch(loss, label, data, x_0, reg, regularizer) # init loss
     g = grad_minibatch(loss, label, data, x_0, reg, regularizer) # init grad
     normg0 = np.sqrt(g @ g)
@@ -1209,10 +1208,7 @@ def svrg(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, b=10, ve
                              total_running_time, epoch_running_time, verbose)
 
         epoch_running_time = 0.0
-        # combined = list(zip(indices,batches))
-        # random.shuffle(combined)
         average_step =0
-        # for i, batch in combined:
         for j in range(num_batches):
             i = np.random.randint(0, num_batches)
             batch = batches[i]       
@@ -1232,6 +1228,59 @@ def svrg(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, b=10, ve
             return  {'x' : x, 'norm_records' : norm_records, 'loss_records' : loss_records, 'time_records' : time_records, 'stepsize_records' :stepsize_records }
     return  {'x' : x, 'norm_records' : norm_records, 'loss_records' : loss_records, 'time_records' : time_records, 'stepsize_records' :stepsize_records }
 
+
+def adasvrg(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, b=10, verbose=1):
+    """
+    Adaptive Stochastic variance reduction gradient algorithm.
+
+    reference: SVRG meets AdaGrad: Painless Variance Reduction
+    """
+    max_effective_pass = (epoch) // 2
+    n, d = data.shape
+    x = x_0.copy()
+    batches = partition_into_batches(n, b)
+    num_batches = len(batches)
+    loss_x0 =loss_minibatch(loss, label, data, x_0, reg, regularizer) # init loss
+    g = grad_minibatch(loss, label, data, x_0, reg, regularizer) # init grad
+    G = g @ g   #Gradient norm accumulation for Adagrad style step normalization
+    normg0 = np.sqrt(G)
+    norm_records, time_records, total_running_time = [normg0], [0.0], 0.0
+    loss_records = [1.0]
+    stepsize_records =[]
+    effective_pass = 0
+
+    for idx in range(max_effective_pass):
+        start_time = time.time()
+        x_ref = x.copy()
+        tot_grad = grad_minibatch(loss, label, data, x_ref, reg, regularizer)
+        x -= lr * tot_grad
+        epoch_running_time = time.time() - start_time
+
+        update_records_and_print(effective_pass, loss, loss_x0, regularizer, data, label, lr, reg, epoch, 
+                             x, norm_records, loss_records, time_records, 
+                             total_running_time, epoch_running_time, verbose)
+
+        epoch_running_time = 0.0
+        average_step =0
+        for j in range(num_batches):
+            i = np.random.randint(0, num_batches)
+            batch = batches[i]       
+            start_time = time.time()
+            grad_i = grad_minibatch(loss, label, data, x, reg, regularizer, batch) 
+            grad_i_ref = grad_minibatch(loss, label, data, x_ref, reg, regularizer, batch)
+            d_i = tot_grad+ grad_i - grad_i_ref 
+            x -= lr * d_i/np.sqrt(G)
+            epoch_running_time += time.time() - start_time
+            average_step += lr/num_batches
+            G += grad_i @ grad_i
+        effective_pass += 1    
+        stepsize_records.append(average_step)
+        update_records_and_print(effective_pass, loss, loss_x0, regularizer, data, label, lr, reg, epoch, 
+                             x, norm_records, loss_records, time_records, 
+                             total_running_time, epoch_running_time, verbose, normg0)
+        if tol is not None and norm_records[-1] <= tol:
+            return  {'x' : x, 'norm_records' : norm_records, 'loss_records' : loss_records, 'time_records' : time_records, 'stepsize_records' :stepsize_records }
+    return  {'x' : x, 'norm_records' : norm_records, 'loss_records' : loss_records, 'time_records' : time_records, 'stepsize_records' :stepsize_records }
 
 def snm(loss, data, label, reg, epoch, x_0, tol=None, verbose=1):
     """

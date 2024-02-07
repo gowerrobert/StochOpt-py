@@ -4,7 +4,7 @@ import logging
 import time
 import numpy as np
 import load_data
-from algorithms import san, sag, svrg, snm, vsn, sana, svrg2, gd, newton, sps, taps, sgd, adam, sps2, SP2L2p, spsdam, spsL1, SP2L1p, SP2maxp, SP2max, SP2
+from algorithms import san, sag, svrg, snm, vsn, sana, svrg2, gd, newton, sps, taps, sgd, adam, sps2, SP2L2p, spsdam, spsL1, SP2L1p, SP2maxp, SP2max, SP2, adasvrg
 import utils
 import pickle
 
@@ -57,6 +57,8 @@ def get_args():
     parser.add_argument('--run_msag', default=False,
                         type=lambda x: (str(x).lower() in ['true', '1', 'yes']))
     parser.add_argument('--run_svrg', default=False,
+                        type=lambda x: (str(x).lower() in ['true', '1', 'yes']))
+    parser.add_argument('--run_adasvrg', default=False,
                         type=lambda x: (str(x).lower() in ['true', '1', 'yes']))
     parser.add_argument('--run_svrg2', default=False,
                         type=lambda x: (str(x).lower() in ['true', '1', 'yes']))
@@ -546,13 +548,29 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
         output_dict = utils.run_algorithm(
              algo_name="SVRG", algo=svrg, algo_kwargs=kwargs, n_repeat=n_rounds)
         collect_save_dictionaries("SVRG", output_dict)
-    # else:
-    #     grad_iter, loss_iter, grad_time = utils.load(folder_path, "SVRG")
-    #     if grad_iter:
-    #         dict_grad_iter["SVRG"] = grad_iter
+
+    if opt.run_adasvrg:
+        np.random.seed(0)  # random seed to reproduce the experiments
+        L_max = utils.compute_L_max(X, reg, opt.loss,opt.regularizer)
+        if L_max ==None:
+            print("Warning!!! SVRG learning rate")
+            svrg_lr = 1.0
+        else:
+            b= opt.b
+            svrg_lr =1/L_max  
+        # The paper theory allows for any step size
+        logging.info("Learning rate used for AdaSVRG: {:f}".format(svrg_lr))
+        kwargs = {"loss": criterion, "data": X, "label": y, "lr": svrg_lr, "reg": reg,
+                  "epoch": epochs, "x_0": x_0.copy(), "regularizer": penalty, "tol": opt.tol, "b" : opt.b}
+        output_dict = utils.run_algorithm(
+             algo_name="AdaSVRG", algo=adasvrg, algo_kwargs=kwargs, n_repeat=n_rounds)
+        collect_save_dictionaries("AdaSVRG", output_dict)
+
 
 ## Final return of run()     
     return dict_grad_iter, dict_loss_iter, dict_time_iter, dict_stepsize_iter
+
+    
 
 if __name__ == '__main__': 
   
