@@ -56,6 +56,8 @@ def get_args():
                         type=lambda x: (str(x).lower() in ['true', '1', 'yes']))
     parser.add_argument('--run_msag', default=False,
                         type=lambda x: (str(x).lower() in ['true', '1', 'yes']))
+    parser.add_argument('--run_msag_star', default=False,
+                        type=lambda x: (str(x).lower() in ['true', '1', 'yes']))
     parser.add_argument('--run_svrg', default=False,
                         type=lambda x: (str(x).lower() in ['true', '1', 'yes']))
     parser.add_argument('--run_adasvrg', default=False,
@@ -270,7 +272,7 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
             algo_name="GD", algo=gd, algo_kwargs=kwargs, n_repeat=n_rounds)
         output_dict = utils.run_algorithm(
             algo_name="GD", algo=gd, algo_kwargs=kwargs, n_repeat=n_rounds)
-        collect_save_dictionaries("Newton", output_dict)
+        collect_save_dictionaries("GD", output_dict)
 
     if opt.run_newton:
         newton_lr = 1.0
@@ -524,7 +526,19 @@ def run(opt, folder_path, criterion, penalty, reg, X, y):
     #     grad_iter, loss_iter, grad_time = utils.load(folder_path, "SAG")
     #     if grad_iter:
     #         dict_grad_iter["SAG"] = grad_iter
-
+    if opt.run_msag_star:
+        np.random.seed(0)  # random seed to reproduce the experiments
+        L_max = utils.compute_L_max(X, reg, opt.loss,opt.regularizer)
+        if L_max ==None:
+            print("Warning!!! MSAG^* learning rate")
+            lr = 1.0
+        else:
+            lr =1/(6*L_max)
+        kwargs = {"loss": criterion, "data": X, "label": y, "lr": lr, "reg": reg,
+                  "epoch": epochs, "x_0": x_0.copy(), "regularizer": penalty, "tol": opt.tol, "b" : opt.b, "MSAG" : True, "fstar" : False}
+        output_dict = utils.run_algorithm(
+            algo_name="MSAG*", algo=sag, algo_kwargs=kwargs, n_repeat=n_rounds)
+        collect_save_dictionaries("MSAG*", output_dict)
 
     if opt.run_svrg:
         np.random.seed(0)  # random seed to reproduce the experiments

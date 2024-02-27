@@ -1106,9 +1106,10 @@ def sag(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, b = 10, v
     if fstar == True:
         func = lambda x: loss_minibatch(loss, label, data, x, reg, regularizer)
         fprime = lambda x: grad_minibatch(loss, label, data, x, reg, regularizer)
-        xstar, fstar, d = fmin_l_bfgs_b(func, x_0, fprime,factr=1.0, pgtol=1e-18, epsilon=1e-18)
+        xstar, fmin, d = fmin_l_bfgs_b(func, x_0, fprime,factr=1.0, pgtol=1e-18, epsilon=1e-18)
     else: 
-        fstar=0.0
+        fmin=  0.0
+        lr_sum = 0.0
     if MSAG: # for adaptive step size
         loss_memory = np.zeros(num_batches)
         inner_memory = np.zeros(num_batches)
@@ -1144,9 +1145,15 @@ def sag(loss, regularizer, data, label, lr, reg, epoch, x_0, tol=None, b = 10, v
                 inneraverage += (gidotx-inner_memory[i])
                 loss_memory[i] = li
                 inner_memory[i] = gidotx
-                if fstar == "estimate":
-                    fstar = fstar 
-                ada_lr = np.maximum(faverage+np.inner(y,x)-inneraverage-fstar,0)/(y @ y)
+                grad_squared = y @ y
+                hk = faverage+np.inner(y,x)-inneraverage
+                if hk-fmin <= 0 and fstar == False: 
+                    fmin = 0.0
+                ada_lr = np.maximum(hk-fmin,0)/(grad_squared)
+                if fstar == False:
+                    ada_lr = np.minimum(lr, ada_lr)
+                    lr_sum += ada_lr
+                    fmin = (1- ada_lr/lr_sum)*fmin + ada_lr*(hk - 0.5*ada_lr*grad_squared)/lr_sum
                 x -= ada_lr * y
                 average_step += ada_lr/num_batches
             elif linesearch:
